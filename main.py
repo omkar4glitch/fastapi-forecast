@@ -1,81 +1,57 @@
-from fastapi import FastAPI, UploadFile, File, Form
-from fastapi.responses import StreamingResponse
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, Form
+from pydantic import HttpUrl
+from typing import Annotated
 import pandas as pd
 from prophet import Prophet
-import io
-import datetime
+from io import BytesIO
+from fastapi.responses import StreamingResponse
+import requests
 
 app = FastAPI()
 
-# Allow CORS for Adalo
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # You can replace "*" with your Adalo domain for security
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-@app.get("/")
-def read_root():
-    return {"status": "API is working!"}
-
-def forecast_sales(df, start_date, end_date):
-    forecast_results = pd.DataFrame()
-    date_range = pd.date_range(start=start_date, end=end_date)
-
-    for column in df.columns:
-        if column.lower() == 'date':
-            continue
-
-        store_df = pd.DataFrame({
-            'ds': df['Date'],
-            'y': df[column]
-        })
-
-        # Ensure no missing values
-        store_df.dropna(inplace=True)
-
-        # Initialize and fit model
-        model = Prophet()
-        model.fit(store_df)
-
-        # Forecast future dates
-        future = pd.DataFrame({'ds': date_range})
-        forecast = model.predict(future)
-
-        # Extract only required columns
-        store_forecast = forecast[['ds', 'yhat']].rename(columns={'yhat': column})
-
-        if forecast_results.empty:
-            forecast_results['Date'] = store_forecast['ds']
-        forecast_results[column] = store_forecast[column]
-
-    return forecast_results
-
 @app.post("/forecast")
-async def forecast_endpoint(
-    file: UploadFile = File(...),
-    start_date: str = Form(...),
-    end_date: str = Form(...)
+async def forecast(
+    file: Annotated[HttpUrl, Form()],
+    start_date: Annotated[str, Form()],
+    end_date: Annotated[str, Form()]
 ):
-    contents = await file.read()
-    df = pd.read_excel(io.BytesIO(contents))
+    try:
+        # Download the Excel file from the given URL
+        response = requests.get(str(file))
+        df = pd.read_excel(BytesIO(response.content))
 
-    # Convert 'Date' to datetime
-    df['Date'] = pd.to_datetime(df['Date'])
+        # Ensure the first column is date
+        df.columns = [str(c).strip() for c in df.columns]
+        df.rename(columns={df.columns[0]: "ds"}, inplace=True)
+        df["ds"] = pd.to_datetime(df["ds"])
 
-    forecast_df = forecast_sales(df, start_date, end_date)
+        # Prepare to collect all forecasted results
+        output_df = pd.DataFrame({"ds": pd.date_range(start=start_date, end=end_date)})
 
-    # Return as Excel file
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        forecast_df.to_excel(writer, index=False)
-    output.seek(0)
+        # Loop through each store column (skip 'ds')
+        for col in df.columns[1:]:
+            store_df = df[["ds", col]].rename(columns={col: "y"}).dropna()
 
-    return StreamingResponse(
-        output,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=forecast_result.xlsx"}
-    )
+            if len(store_df) < 2:
+                # Skip if insufficient data for forecasting
+                continue
+
+            model = Prophet()
+            model.fit(store_df)
+
+            future = pd.DataFrame({"ds": output_df["ds"]})
+            forecast = model.predict(future)
+
+            # Add forecast to output DataFrame
+            output_df[col + "_forecast"] = forecast["yhat"]
+
+        # Write results to an Excel file in memory
+        output_stream = BytesIO()
+        output_df.to_excel(output_stream, index=False)
+        output_stream.seek(0)
+
+        # Return downloadable Excel file
+        return StreamingResponse(output_stream, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": "attachment; filename=forecast_result.xlsx"})
+
+    except Exception as e:
+        return {"error": str(e)}
