@@ -5,4 +5,4 @@ openpyxl
 scikit-learn
 prophet==1.1.5
 numpy==1.24.4
-
+cmdstanpy==1.1.0
