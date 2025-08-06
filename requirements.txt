@@ -1,8 +1,8 @@
 fastapi
 uvicorn
 pandas
+numpy
 openpyxl
-prophet
-python-multipart
 requests
 pydantic
+scikit-learn
