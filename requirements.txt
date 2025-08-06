@@ -4,4 +4,4 @@ pandas
 openpyxl
 prophet
 python-multipart
-
+requests
