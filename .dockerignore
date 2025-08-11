@@ -1,0 +1,26 @@
+# Ignore Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore local virtual environments
+venv/
+.env/
+
+# Ignore git files
+.git
+.gitignore
+
+# Ignore IDE/project files
+.vscode/
+.idea/
+
+# Ignore OS junk files
+.DS_Store
+Thumbs.db
+
+# Ignore local data files if any
+*.csv
+*.xlsx
+*.xls
