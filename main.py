@@ -1,40 +1,29 @@
-from fastapi import FastAPI, Form
+from fastapi import FastAPI
 from pydantic import BaseModel
-import pandas as pd
-import uuid
-import os
 import requests
+import pandas as pd
+from io import BytesIO
 
 app = FastAPI()
 
-class ForecastResponse(BaseModel):
-    download_link: str
+class FileURL(BaseModel):
+    file_url: str
 
-@app.post("/forecast", response_model=ForecastResponse)
-async def forecast(
-    file_url: str = Form(...),
-    start_date: str = Form(...),
-    end_date: str = Form(...)
-):
-    # 1️⃣ Download the uploaded file from Adalo
-    response = requests.get(file_url)
-    temp_filename = f"temp_{uuid.uuid4()}.xlsx"
-    with open(temp_filename, "wb") as f:
-        f.write(response.content)
+@app.post("/forecast")
+async def forecast_from_url(data: FileURL):
+    # Download file
+    response = requests.get(data.file_url)
+    response.raise_for_status()
+    
+    # Load into pandas
+    df = pd.read_excel(BytesIO(response.content))
+    
+    # Process your forecast logic here
+    forecast_df = df  # placeholder
+    
+    # Save result to bytes
+    output_bytes = BytesIO()
+    forecast_df.to_excel(output_bytes, index=False)
+    output_bytes.seek(0)
 
-    # 2️⃣ Read and process the file (replace with your forecasting code)
-    df = pd.read_excel(temp_filename)
-    # Example dummy processing: just save the same file as output
-    output_filename = f"forecast_{uuid.uuid4()}.xlsx"
-    df.to_excel(output_filename, index=False)
-
-    # 3️⃣ Delete the original temp file
-    os.remove(temp_filename)
-
-    # 4️⃣ Return download link (Adalo will see `download_link` now)
-    download_link = f"https://web-production-df285.up.railway.app/{output_filename}"
-    return ForecastResponse(download_link=download_link)
-
-# 5️⃣ Serve the generated files
-from fastapi.staticfiles import StaticFiles
-app.mount("/", StaticFiles(directory="."), name="static")
+    return {"message": "Forecast complete", "rows": len(forecast_df)}
