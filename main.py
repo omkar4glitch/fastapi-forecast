@@ -1,110 +1,64 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 import pandas as pd
-from prophet import Prophet
-import os
-import uuid
 import requests
 from io import BytesIO
-from fastapi.responses import FileResponse
+from prophet import Prophet
 from openpyxl import load_workbook
-from datetime import datetime
+from openpyxl.styles import numbers
+from fastapi.responses import StreamingResponse
 
 app = FastAPI()
 
-# Folder to store temporary files
-FILES_DIR = "files"
-os.makedirs(FILES_DIR, exist_ok=True)
-
 class ForecastRequest(BaseModel):
     file_url: str
-    forecast_start: str 
-    forecast_end: str    
+    forecast_start: str
+    forecast_end: str
 
 @app.post("/forecast")
-def forecast(request: ForecastRequest):
-    try:
-        # === 1. Download file from public URL ===
-        response = requests.get(request.file_url)
-        response.raise_for_status()
+def forecast_sales(req: ForecastRequest):
+    # Download file
+    r = requests.get(req.file_url)
+    df = pd.read_excel(BytesIO(r.content))
 
-        # === 2. Read Excel or CSV ===
-        try:
-            df = pd.read_excel(BytesIO(response.content))
-        except:
-            df = pd.read_csv(BytesIO(response.content))
+    # First column is date
+    df.rename(columns={df.columns[0]: "ds"}, inplace=True)
+    df["ds"] = pd.to_datetime(df["ds"])
 
-        # Ensure Date column is datetime
-        df["Date"] = pd.to_datetime(df["Date"])
+    # Forecast for each store column
+    forecast_results = pd.DataFrame()
+    forecast_results["ds"] = pd.date_range(req.forecast_start, req.forecast_end)
 
-        # === 3. Reshape data to long format ===
-        df_long = pd.melt(df, id_vars=["Date"], var_name="Store", value_name="Sales")
+    for store in df.columns[1:]:
+        m = Prophet()
+        temp_df = df[["ds", store]].rename(columns={store: "y"})
+        m.fit(temp_df)
+        future = pd.DataFrame({"ds": pd.date_range(req.forecast_start, req.forecast_end)})
+        forecast = m.predict(future)
+        forecast_results[store] = forecast["yhat"].round(0)  # No decimals
 
-        # === 4. Forecast parameters from Adalo ===
-        forecast_start = pd.to_datetime(request.forecast_start)
-        forecast_end = pd.to_datetime(request.forecast_end)
-        future_dates = pd.date_range(start=forecast_start, end=forecast_end, freq='D')
-        store_forecasts = {}
+    # Save to Excel
+    output = BytesIO()
+    forecast_results.to_excel(output, index=False)
+    output.seek(0)
 
-        # === 5. Loop over each store and forecast with Prophet ===
-        for store in df_long["Store"].unique():
-            store_df = df_long[df_long["Store"] == store].dropna()
+    # Format Excel
+    wb = load_workbook(output)
+    ws = wb.active
 
-            if len(store_df) < 2:
-                continue  # Skip if not enough data
+    # Date format (short date)
+    for row in ws.iter_rows(min_row=2, max_col=1):
+        for cell in row:
+            cell.number_format = "yyyy-mm-dd"
 
-            prophet_df = store_df.rename(columns={"Date": "ds", "Sales": "y"})
+    # Comma style, no decimals
+    for row in ws.iter_rows(min_row=2, min_col=2, max_col=ws.max_column):
+        for cell in row:
+            cell.number_format = "#,##0"
 
-            model = Prophet(daily_seasonality=True, yearly_seasonality=True)
-            model.fit(prophet_df)
+    output2 = BytesIO()
+    wb.save(output2)
+    output2.seek(0)
 
-            future = pd.DataFrame({"ds": future_dates})
-            forecast_df = model.predict(future)
-            store_forecasts[store] = forecast_df[["ds", "yhat"]].rename(columns={"yhat": store})
-
-        # === 6. Combine forecasts into wide format ===
-        wide_forecast = pd.DataFrame({"Date": future_dates})
-        for store, store_df in store_forecasts.items():
-            wide_forecast = wide_forecast.merge(
-                store_df.rename(columns={"ds": "Date"}), 
-                on="Date", 
-                how="left"
-            )
-
-        # === 7. Save output as Excel (first unformatted) ===
-        output_filename = f"forecast_{uuid.uuid4().hex}.xlsx"
-        output_path = os.path.join(FILES_DIR, output_filename)
-        wide_forecast.to_excel(output_path, index=False)
-
-        # === 8. Format Excel file ===
-        wb = load_workbook(output_path)
-        ws = wb.active
-
-        for row in ws.iter_rows(min_row=2):  # Skip header row
-            for cell in row:
-                if isinstance(cell.value, (int, float)):
-                    cell.number_format = '#,##0'  # Comma style, no decimals
-                elif isinstance(cell.value, datetime):
-                    cell.number_format = 'm/d/yyyy'  # Short date format
-
-        wb.save(output_path)
-        wb.close()
-
-        # === 9. Return public link to file ===
-        download_url = f"https://{os.environ.get('RAILWAY_STATIC_URL', 'web-production-df285.up.railway.app')}/files/{output_filename}"
-
-        return {
-            "message": "Forecast complete",
-            "download_url": download_url
-        }
-
-    except Exception as e:
-        return {"error": str(e)}
-
-# Serve files
-@app.get("/files/{filename}")
-def get_file(filename: str):
-    file_path = os.path.join(FILES_DIR, filename)
-    if os.path.exists(file_path):
-        return FileResponse(file_path, filename=filename)
-    return {"error": "File not found"}
+    return StreamingResponse(output2, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                              headers={"Content-Disposition": "attachment; filename=forecast.xlsx"})
