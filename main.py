@@ -18,8 +18,8 @@ os.makedirs(FILES_DIR, exist_ok=True)
 
 class ForecastRequest(BaseModel):
     file_url: str
-    forecast_start: str  # Example: "2025-08-11"
-    forecast_end: str    # Example: "2025-08-17"
+    forecast_start: str 
+    forecast_end: str    
 
 @app.post("/forecast")
 def forecast(request: ForecastRequest):
