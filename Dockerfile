@@ -1,10 +1,10 @@
-FROM python:3.11-bullseye
+# Use an official lightweight Python image
+FROM python:3.11-slim
 
-ENV DEBIAN_FRONTEND=noninteractive
-
-# Install system dependencies for Prophet + cmdstan
+# Install system dependencies needed for Prophet & cmdstanpy
 RUN apt-get update && apt-get install -y \
     build-essential \
+    python3-dev \
     libatlas-base-dev \
     gcc \
     g++ \
@@ -13,14 +13,20 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements
+# Set working directory in container
+WORKDIR /app
+
+# Copy requirements first (for caching)
 COPY requirements.txt .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy app code
+# Copy the rest of your app
 COPY . .
 
-# Run API
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+# Expose port (Railway expects this)
+EXPOSE 8000
+
+# Command to run the API
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
