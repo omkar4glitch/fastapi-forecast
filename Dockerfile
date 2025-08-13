@@ -2,26 +2,26 @@ FROM python:3.11-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Fix apt-get update failures
-RUN apt-get clean && rm -rf /var/lib/apt/lists/* \
-    && apt-get update -o Acquire::CompressionTypes::Order::=gz \
-    && apt-get install -y \
-       build-essential \
-       python3-dev \
-       libatlas-base-dev \
-       gcc \
-       g++ \
-       make \
-       git \
-       curl \
+# Install system dependencies for Prophet + cmdstan
+RUN apt-get update --fix-missing && apt-get install -y \
+    build-essential \
+    python3-dev \
+    libatlas-base-dev \
+    gcc \
+    g++ \
+    make \
+    git \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install dependencies
+# Copy requirements
 COPY requirements.txt .
+
+# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy app
+# Copy app code
 COPY . .
 
-# Run FastAPI
+# Run API
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
