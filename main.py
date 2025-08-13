@@ -7,6 +7,8 @@ import uuid
 import requests
 from io import BytesIO
 from fastapi.responses import FileResponse
+from openpyxl import load_workbook
+from datetime import datetime
 
 app = FastAPI()
 
@@ -69,12 +71,26 @@ def forecast(request: ForecastRequest):
                 how="left"
             )
 
-        # === 7. Save output as Excel ===
+        # === 7. Save output as Excel (first unformatted) ===
         output_filename = f"forecast_{uuid.uuid4().hex}.xlsx"
         output_path = os.path.join(FILES_DIR, output_filename)
         wide_forecast.to_excel(output_path, index=False)
 
-        # === 8. Return public link to file ===
+        # === 8. Format Excel file ===
+        wb = load_workbook(output_path)
+        ws = wb.active
+
+        for row in ws.iter_rows(min_row=2):  # Skip header row
+            for cell in row:
+                if isinstance(cell.value, (int, float)):
+                    cell.number_format = '#,##0'  # Comma style, no decimals
+                elif isinstance(cell.value, datetime):
+                    cell.number_format = 'm/d/yyyy'  # Short date format
+
+        wb.save(output_path)
+        wb.close()
+
+        # === 9. Return public link to file ===
         download_url = f"https://{os.environ.get('RAILWAY_STATIC_URL', 'web-production-df285.up.railway.app')}/files/{output_filename}"
 
         return {
